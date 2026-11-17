@@ -1,8 +1,13 @@
+import { Storefront } from "../components/Storefront";
+
 export default function HomePage() {
   return (
     <main>
-      <h1>RolloutLab</h1>
-      <p>Progressive delivery with release guardrails.</p>
+      <header>
+        <h1>RolloutLab sample storefront</h1>
+        <p>A small shop used to try out flags and rollouts. All products and prices are synthetic.</p>
+      </header>
+      <Storefront />
     </main>
   );
 }
