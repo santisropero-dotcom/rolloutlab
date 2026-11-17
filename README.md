@@ -72,7 +72,7 @@ flowchart LR
 
 | Week | Focus | Status |
 |---|---|---|
-| Week 1 | **W01-01 + CI** — Scaffold workspace with Compose stack, add sample storefront, add default-off checkout flag with test | Planned |
+| Week 1 | **W01-01 + CI** — Scaffold workspace with Compose stack, add sample storefront, add default-off checkout flag with test | ✅ Done |
 | Week 2 | **Flags & evaluation** — Add environments, flags and roles, add targeting rules, add deterministic cohort bucketing, add typed defaults | Planned |
 | Week 3 | **Provider & rollouts** — Add local OpenFeature provider, show flag evaluation reasons, add rollout versions, add stage-transition state machine | Planned |
 | Week 4 | **Telemetry & gates** — Ingest and deduplicate events, aggregate cohort metrics in a worker, evaluate thresholds and minimum sample sizes | Planned |
