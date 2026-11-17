@@ -2,7 +2,7 @@
 
 **Progressive delivery with release guardrails.** RolloutLab keeps feature-flag cohorts stable, replays health signals for each cohort, and explains whether a rollout should advance, wait for more data, or pause.
 
-> **Status:** early development, following a 12-week roadmap (see below). It uses a sample storefront and synthetic telemetry.
+> **Status:** early development, following a 6-week roadmap (see below). It uses a sample storefront and synthetic telemetry.
 
 ## The problem
 
@@ -70,14 +70,14 @@ flowchart LR
 
 ## Roadmap
 
-| Weeks | Focus |
-|---|---|
-| 1–2 | Workspace, CI and sample storefront; environments, flags, targeting and roles |
-| 3–4 | Deterministic cohort bucketing and rule evaluation; local OpenFeature provider |
-| 5–6 | Rollout stages and state machine; telemetry ingestion and cohort metrics |
-| 7–8 | Thresholds and minimum sample sizes; release dashboard |
-| 9–10 | Simulated rollbacks with role checks and audit; concurrency and latency tests |
-| 11–12 | Containers, release documentation, end-to-end tests and demo |
+| Week | Focus | Status |
+|---|---|---|
+| Week 1 | **W01-01 + CI** — Scaffold workspace with Compose stack, add sample storefront, add default-off checkout flag with test | Planned |
+| Week 2 | **Flags & evaluation** — Add environments, flags and roles, add targeting rules, add deterministic cohort bucketing, add typed defaults | Planned |
+| Week 3 | **Provider & rollouts** — Add local OpenFeature provider, show flag evaluation reasons, add rollout versions, add stage-transition state machine | Planned |
+| Week 4 | **Telemetry & gates** — Ingest and deduplicate events, aggregate cohort metrics in a worker, evaluate thresholds and minimum sample sizes | Planned |
+| Week 5 | **Dashboard & rollback** — Add release dashboard with metric trends, add decision history, add simulated rollback proposals with role checks, record rollout audit entries | Planned |
+| Week 6 | **Release** — Cover concurrent delivery and measure evaluation latency, package containers, document cache invalidation and release gates, add end-to-end tests and architecture docs | Planned |
 
 ## Getting started
 
