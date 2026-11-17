@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { catalog, findProduct } from "../lib/catalog";
+import { checkoutButtonLabel } from "../lib/checkout";
 import {
   MAX_QUANTITY,
   addItem,
@@ -12,7 +13,12 @@ import {
   type Cart,
 } from "../lib/cart";
 
-export function Storefront() {
+export interface StorefrontProps {
+  /** Value of the `new-checkout` flag, resolved on the server. */
+  newCheckout: boolean;
+}
+
+export function Storefront({ newCheckout }: StorefrontProps) {
   const [cart, setCart] = useState<Cart>([]);
   const [orderPlaced, setOrderPlaced] = useState(false);
   const totals = cartTotals(cart, findProduct);
@@ -95,7 +101,7 @@ export function Storefront() {
               <dd>{formatPrice(totals.totalCents)}</dd>
             </dl>
             <button type="button" className="primary" onClick={placeOrder}>
-              Checkout ({totals.itemCount} {totals.itemCount === 1 ? "item" : "items"})
+              {checkoutButtonLabel(totals, newCheckout)}
             </button>
           </>
         )}
