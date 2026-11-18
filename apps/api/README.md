@@ -57,3 +57,14 @@ curl -s -X PUT localhost:4000/workspaces/storefront/flags/new-checkout/environme
 ```
 
 The demo seed has one rule in `storefront` / `development`: emails ending in `@rolloutlab.test` get `new-checkout` on.
+
+## Cohort bucketing
+
+Percentage rollouts put each identity in one of 10,000 buckets (`src/domain/bucketing.ts`). The bucket comes from SHA-256 of the flag key, the flag's `salt` and the identity's subject key, so it is the same on every run and every server, with nothing stored.
+
+- An identity is in a rollout of `p` % when its bucket is below `p × 100`. Percentages take up to two decimals (`12.5`, `0.01`).
+- Raising the percentage only adds identities; lowering it only removes them. Editing targeting rules doesn't move anyone's bucket.
+- A new flag's salt is its key. `PATCH { "salt": "reshuffle-1" }` (letters, digits, `.`, `_`, `-`; up to 64) reshuffles every cohort for that flag; it is the only way to do so.
+- Subject keys are required, at most 256 characters, and can't contain newlines.
+
+With the demo salt, 104 of 1,000 synthetic identities (`synthetic-0000`…`synthetic-0999`) fall inside a 10 % rollout of `new-checkout`.

@@ -126,6 +126,8 @@ export class MemoryStore {
       type: "boolean",
       // New flags are off unless the caller says otherwise.
       defaultValue: input.defaultValue ?? false,
+      // The key is a stable starting salt; owners can rotate it later.
+      salt: input.key,
       archived: false,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -139,6 +141,7 @@ export class MemoryStore {
     if (!flag) throw new ApiError(404, "NOT_FOUND", `Flag "${key}" not found`);
     if (patch.description !== undefined) flag.description = patch.description;
     if (patch.defaultValue !== undefined) flag.defaultValue = patch.defaultValue;
+    if (patch.salt !== undefined) flag.salt = patch.salt;
     if (patch.archived !== undefined) flag.archived = patch.archived;
     flag.updatedAt = this.now().toISOString();
     return { ...flag };

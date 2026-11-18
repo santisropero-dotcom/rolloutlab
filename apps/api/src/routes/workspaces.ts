@@ -48,6 +48,7 @@ const flagPatchBody = {
   properties: {
     description: { type: "string", maxLength: 500 },
     defaultValue: { type: "boolean" },
+    salt: { type: "string", pattern: "^[A-Za-z0-9._-]{1,64}$" },
     archived: { type: "boolean" },
   },
 } as const;
@@ -121,11 +122,21 @@ export function registerWorkspaceRoutes(app: FastifyInstance, store: MemoryStore
     async (request) => {
       const { workspaceId, flagKey } = request.params;
       authorize(store, request, workspaceId, "flags:write");
-      const { description, defaultValue, archived } = request.body;
-      if (description === undefined && defaultValue === undefined && archived === undefined) {
+      const { description, defaultValue, salt, archived } = request.body;
+      if (
+        description === undefined &&
+        defaultValue === undefined &&
+        salt === undefined &&
+        archived === undefined
+      ) {
         throw new ApiError(400, "VALIDATION_FAILED", "Nothing to update");
       }
-      return store.updateFlag(workspaceId, flagKey, { description, defaultValue, archived });
+      return store.updateFlag(workspaceId, flagKey, {
+        description,
+        defaultValue,
+        salt,
+        archived,
+      });
     },
   );
 }

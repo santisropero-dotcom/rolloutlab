@@ -26,6 +26,8 @@ export interface Flag {
   description: string;
   type: "boolean";
   defaultValue: boolean;
+  /** Mixed into cohort bucketing; changing it reshuffles percentage cohorts. */
+  salt: string;
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -45,5 +47,6 @@ export interface NewFlag {
 export interface FlagPatch {
   description?: string;
   defaultValue?: boolean;
+  salt?: string;
   archived?: boolean;
 }

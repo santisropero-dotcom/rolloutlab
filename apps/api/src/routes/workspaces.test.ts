@@ -120,6 +120,7 @@ describe("workspace API", () => {
         key: "express-shipping",
         type: "boolean",
         defaultValue: false,
+        salt: "express-shipping",
         archived: false,
         createdAt: "2026-01-05T09:00:00.000Z",
       });
@@ -212,6 +213,27 @@ describe("workspace API", () => {
         payload: {},
       });
       expect(res.statusCode).toBe(400);
+    });
+
+    it("rotates the bucketing salt and rejects salts with spaces or newlines", async () => {
+      const rotated = await app.inject({
+        method: "PATCH",
+        url: "/workspaces/storefront/flags/new-checkout",
+        headers: as("bob"),
+        payload: { salt: "reshuffle-1" },
+      });
+      expect(rotated.statusCode).toBe(200);
+      expect(rotated.json().salt).toBe("reshuffle-1");
+
+      for (const salt of ["", "two words", "line\nbreak"]) {
+        const res = await app.inject({
+          method: "PATCH",
+          url: "/workspaces/storefront/flags/new-checkout",
+          headers: as("bob"),
+          payload: { salt },
+        });
+        expect(res.statusCode).toBe(400);
+      }
     });
 
     it("returns 404 for an unknown flag", async () => {
