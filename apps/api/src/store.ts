@@ -7,6 +7,7 @@ import type {
   NewFlag,
   Workspace,
 } from "./domain/types.js";
+import type { FlagConfig } from "./domain/evaluation.js";
 import type { FlagTargeting, TargetingRule } from "./domain/targeting.js";
 import { ApiError } from "./errors.js";
 
@@ -182,6 +183,39 @@ export class MemoryStore {
     return { workspaceId, flagKey, environmentKey, rules: cloneRules(rules), updatedAt };
   }
 
+  /**
+   * Flag settings plus that environment's rules, for the evaluator. An unknown
+   * flag gives `undefined` so evaluation can answer FLAG_NOT_FOUND; an unknown
+   * environment is a request error.
+   */
+  getFlagConfig(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+  ): FlagConfig | undefined {
+    this.requireEnvironment(workspaceId, environmentKey);
+    const flag = this.findFlag(workspaceId, flagKey);
+    if (!flag) return undefined;
+    const saved = this.targeting.get(targetingKey(workspaceId, flagKey, environmentKey));
+    return {
+      key: flag.key,
+      type: flag.type,
+      defaultValue: flag.defaultValue,
+      salt: flag.salt,
+      archived: flag.archived,
+      rules: cloneRules(saved?.rules ?? []),
+    };
+  }
+
+  private requireEnvironment(workspaceId: string, environmentKey: string): void {
+    const environment = this.environments.find(
+      (e) => e.workspaceId === workspaceId && e.key === environmentKey,
+    );
+    if (!environment) {
+      throw new ApiError(404, "NOT_FOUND", `Environment "${environmentKey}" not found`);
+    }
+  }
+
   private requireFlagAndEnvironment(
     workspaceId: string,
     flagKey: string,
@@ -189,12 +223,7 @@ export class MemoryStore {
   ): Flag {
     const flag = this.findFlag(workspaceId, flagKey);
     if (!flag) throw new ApiError(404, "NOT_FOUND", `Flag "${flagKey}" not found`);
-    const environment = this.environments.find(
-      (e) => e.workspaceId === workspaceId && e.key === environmentKey,
-    );
-    if (!environment) {
-      throw new ApiError(404, "NOT_FOUND", `Environment "${environmentKey}" not found`);
-    }
+    this.requireEnvironment(workspaceId, environmentKey);
     return flag;
   }
 
@@ -222,5 +251,6 @@ function cloneRules(rules: readonly TargetingRule[]): TargetingRule[] {
   return rules.map((rule) => ({
     ...rule,
     conditions: rule.conditions.map((c) => ({ ...c, values: [...c.values] })),
+    ...(rule.rollout && { rollout: { ...rule.rollout } }),
   }));
 }

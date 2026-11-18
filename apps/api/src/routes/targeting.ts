@@ -52,6 +52,12 @@ const ruleSchema = {
       items: conditionSchema,
     },
     serve: { type: "boolean" },
+    rollout: {
+      type: "object",
+      required: ["percentage"],
+      additionalProperties: false,
+      properties: { percentage: { type: "number", minimum: 0, maximum: 100 } },
+    },
   },
 } as const;
 
@@ -96,6 +102,7 @@ export function registerTargetingRoutes(app: FastifyInstance, store: MemoryStore
         description: rule.description ?? "",
         conditions: rule.conditions,
         serve: rule.serve,
+        ...(rule.rollout && { rollout: { percentage: rule.rollout.percentage } }),
       }));
       const problems = ruleListProblems(rules);
       if (problems.length > 0) {

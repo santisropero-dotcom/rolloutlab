@@ -1,3 +1,5 @@
+import { percentageProblem } from "./bucketing.js";
+
 /**
  * Targeting rules: ordered, per-environment conditions that pick a value for
  * the identities they match.
@@ -20,11 +22,21 @@ export interface Condition {
   values: string[];
 }
 
+export interface Rollout {
+  /** 0–100 with up to two decimals; see `bucketing.ts`. */
+  percentage: number;
+}
+
 export interface TargetingRule {
   id: string;
   description: string;
   conditions: Condition[];
   serve: boolean;
+  /**
+   * Serve only a percentage of the matching identities. The rest continue to
+   * the next rule, as if this rule had not matched.
+   */
+  rollout?: Rollout;
 }
 
 export interface FlagTargeting {
@@ -87,6 +99,10 @@ export function ruleListProblems(rules: readonly TargetingRule[]): string[] {
   for (const rule of rules) {
     if (seen.has(rule.id)) problems.push(`Duplicate rule id "${rule.id}"`);
     seen.add(rule.id);
+    if (rule.rollout) {
+      const problem = percentageProblem(rule.rollout.percentage);
+      if (problem) problems.push(`Rule "${rule.id}": ${problem}`);
+    }
   }
   return problems;
 }
