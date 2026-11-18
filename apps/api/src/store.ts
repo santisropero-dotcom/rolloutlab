@@ -7,6 +7,7 @@ import type {
   NewFlag,
   Workspace,
 } from "./domain/types.js";
+import type { FlagTargeting, TargetingRule } from "./domain/targeting.js";
 import { ApiError } from "./errors.js";
 
 export interface StoreSeed {
@@ -14,6 +15,7 @@ export interface StoreSeed {
   memberships: Membership[];
   environments?: Array<NewEnvironment & { workspaceId: string }>;
   flags?: Array<NewFlag & { workspaceId: string }>;
+  targeting?: Array<Omit<FlagTargeting, "updatedAt">>;
 }
 
 /**
@@ -28,6 +30,8 @@ export class MemoryStore {
   private readonly memberships: Membership[] = [];
   private readonly environments: Environment[] = [];
   private readonly flags: Flag[] = [];
+  /** Rules per flag and environment, keyed by `workspace/flag/environment`. */
+  private readonly targeting = new Map<string, { rules: TargetingRule[]; updatedAt: string }>();
   private sequence = 0;
 
   constructor(private readonly now: () => Date = () => new Date()) {}
@@ -41,6 +45,9 @@ export class MemoryStore {
     }
     for (const { workspaceId, ...input } of seed.flags ?? []) {
       store.createFlag(workspaceId, input);
+    }
+    for (const { workspaceId, flagKey, environmentKey, rules } of seed.targeting ?? []) {
+      store.setTargeting(workspaceId, flagKey, environmentKey, rules);
     }
     return store;
   }
@@ -137,6 +144,57 @@ export class MemoryStore {
     return { ...flag };
   }
 
+  /**
+   * Targeting for one flag in one environment. A flag with no saved rules has
+   * an empty list, so every identity gets the flag's default.
+   */
+  getTargeting(workspaceId: string, flagKey: string, environmentKey: string): FlagTargeting {
+    this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    const saved = this.targeting.get(targetingKey(workspaceId, flagKey, environmentKey));
+    return {
+      workspaceId,
+      flagKey,
+      environmentKey,
+      rules: cloneRules(saved?.rules ?? []),
+      updatedAt: saved?.updatedAt ?? null,
+    };
+  }
+
+  /** Replaces the whole ordered rule list, so reordering is a single write. */
+  setTargeting(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+    rules: readonly TargetingRule[],
+  ): FlagTargeting {
+    const flag = this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    if (flag.archived) {
+      throw new ApiError(409, "CONFLICT", `Flag "${flagKey}" is archived`);
+    }
+    const updatedAt = this.now().toISOString();
+    this.targeting.set(targetingKey(workspaceId, flagKey, environmentKey), {
+      rules: cloneRules(rules),
+      updatedAt,
+    });
+    return { workspaceId, flagKey, environmentKey, rules: cloneRules(rules), updatedAt };
+  }
+
+  private requireFlagAndEnvironment(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+  ): Flag {
+    const flag = this.findFlag(workspaceId, flagKey);
+    if (!flag) throw new ApiError(404, "NOT_FOUND", `Flag "${flagKey}" not found`);
+    const environment = this.environments.find(
+      (e) => e.workspaceId === workspaceId && e.key === environmentKey,
+    );
+    if (!environment) {
+      throw new ApiError(404, "NOT_FOUND", `Environment "${environmentKey}" not found`);
+    }
+    return flag;
+  }
+
   private findFlag(workspaceId: string, key: string): Flag | undefined {
     return this.flags.find((f) => f.workspaceId === workspaceId && f.key === key);
   }
@@ -151,4 +209,15 @@ export class MemoryStore {
     this.sequence += 1;
     return `${prefix}_${this.sequence}`;
   }
+}
+
+function targetingKey(workspaceId: string, flagKey: string, environmentKey: string): string {
+  return `${workspaceId}/${flagKey}/${environmentKey}`;
+}
+
+function cloneRules(rules: readonly TargetingRule[]): TargetingRule[] {
+  return rules.map((rule) => ({
+    ...rule,
+    conditions: rule.conditions.map((c) => ({ ...c, values: [...c.values] })),
+  }));
 }

@@ -4,7 +4,7 @@ import type { FlagPatch, NewEnvironment, NewFlag } from "../domain/types.js";
 import { ApiError } from "../errors.js";
 import type { MemoryStore } from "../store.js";
 
-const KEY_PATTERN = "^[a-z0-9][a-z0-9-]{0,62}$";
+export const KEY_PATTERN = "^[a-z0-9][a-z0-9-]{0,62}$";
 
 const workspaceParams = {
   type: "object",

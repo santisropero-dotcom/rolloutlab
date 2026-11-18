@@ -34,6 +34,23 @@ export const demoSeed: StoreSeed = {
       defaultValue: false,
     },
   ],
+  targeting: [
+    {
+      workspaceId: "storefront",
+      flagKey: "new-checkout",
+      environmentKey: "development",
+      rules: [
+        {
+          id: "internal-staff",
+          description: "Staff try the new checkout first.",
+          conditions: [
+            { attribute: "email", operator: "ends_with", values: ["@rolloutlab.test"] },
+          ],
+          serve: true,
+        },
+      ],
+    },
+  ],
 };
 
 export function createDemoStore(): MemoryStore {

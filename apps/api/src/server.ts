@@ -1,5 +1,6 @@
 import Fastify, { type FastifyError } from "fastify";
 import { ApiError } from "./errors.js";
+import { registerTargetingRoutes } from "./routes/targeting.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { createDemoStore } from "./seed.js";
 import type { MemoryStore } from "./store.js";
@@ -40,6 +41,7 @@ export function buildServer(options: ServerOptions = {}) {
   app.get("/health", async () => ({ status: "ok", service: "api" }));
 
   registerWorkspaceRoutes(app, store);
+  registerTargetingRoutes(app, store);
 
   return app;
 }
