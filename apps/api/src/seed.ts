@@ -51,6 +51,17 @@ export const demoSeed: StoreSeed = {
       ],
     },
   ],
+  rollouts: [
+    {
+      workspaceId: "storefront",
+      flagKey: "new-checkout",
+      environmentKey: "production",
+      serve: true,
+      stages: [{ percentage: 10 }, { percentage: 50 }, { percentage: 100 }],
+      note: "Canary at 10 %, then half of shoppers, then everyone.",
+      createdBy: "alice",
+    },
+  ],
 };
 
 export function createDemoStore(): MemoryStore {

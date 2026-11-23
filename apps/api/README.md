@@ -1,6 +1,6 @@
 # @rolloutlab/api
 
-Fastify API for workspaces, environments, flags and targeting rules. Data lives in memory for now and is seeded with synthetic demo workspaces on start.
+Fastify API for workspaces, environments, flags, targeting rules and rollout plans. Data lives in memory for now and is seeded with synthetic demo workspaces on start.
 
 ## Identity (local only)
 
@@ -35,6 +35,9 @@ A user outside a workspace gets `404`, the same answer as for a workspace that d
 | GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rules` | read |
 | PUT | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rules` | owner, editor |
 | POST | `/workspaces/:workspaceId/environments/:environmentKey/flags/:flagKey/evaluate` | read |
+| GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/versions` | read |
+| GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/versions/:version` | read |
+| POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/versions` | owner, editor |
 
 Flag and environment keys are lowercase kebab case (`new-checkout`). New flags default to `false`. Errors use `{ "error": { "code", "message" } }`.
 
@@ -93,3 +96,21 @@ Order: unknown flag → type check → archived → rules top to bottom → the 
 | Unknown flag (`FLAG_NOT_FOUND`), default of another type (`TYPE_MISMATCH`), unusable `targetingKey` (`INVALID_CONTEXT`) | `ERROR` + `errorCode` | the caller's default |
 
 The value always has the type of the caller's default, so a misconfigured flag can't hand a string to code expecting a boolean. Evaluation problems are answered with `200`; only access and malformed requests are HTTP errors. Rollout rules are skipped for identities without a string `targetingKey`. Context values can be strings (up to 1,000 characters), numbers, booleans or `null`; at most 50 attributes.
+
+## Rollout versions
+
+A rollout plan lists the stages a flag goes through in one environment, for example 10 % → 50 % → 100 % (`src/domain/rollouts.ts`). Plans are versioned: `POST …/rollout/versions` adds version 2, 3, … and earlier versions are never changed, so a later decision can always point to the plan it was made against.
+
+- `stages`: 1 to 10 percentages, each above 0 with up to two decimals, strictly increasing, ending at 100. Pausing or rolling back is not a stage.
+- `serve`: the value for identities inside the current stage.
+- `baseVersion`: the latest version the author saw (`0` for the first). If someone published in between, the request gets `409` instead of overwriting their plan.
+- Each version records who wrote it and the flag's `salt` at that moment. Stages only list percentages; which identities they cover still comes from the salt-based buckets above, so moving between stages or versions never reshuffles anyone. A salt rotation shows up as a different `salt` on the next version.
+- Archived flags can't get new versions (`409`).
+
+```sh
+curl -s -X POST localhost:4000/workspaces/storefront/flags/new-checkout/environments/production/rollout/versions \
+  -H 'x-rolloutlab-user: bob' -H 'content-type: application/json' \
+  -d '{"serve":true,"stages":[{"percentage":5},{"percentage":25},{"percentage":100}],"baseVersion":1}'
+```
+
+The demo seed has version 1 in `storefront` / `production`: 10 % → 50 % → 100 %, written by `alice`. Moving between stages comes next.

@@ -1,4 +1,5 @@
 import type { FlagConfig, FlagTargeting, TargetingRule } from "@rolloutlab/evaluator";
+import type { NewRolloutVersion, RolloutVersion } from "./domain/rollouts.js";
 import type {
   Environment,
   Flag,
@@ -16,6 +17,14 @@ export interface StoreSeed {
   environments?: Array<NewEnvironment & { workspaceId: string }>;
   flags?: Array<NewFlag & { workspaceId: string }>;
   targeting?: Array<Omit<FlagTargeting, "updatedAt">>;
+  rollouts?: Array<
+    Omit<NewRolloutVersion, "baseVersion"> & {
+      workspaceId: string;
+      flagKey: string;
+      environmentKey: string;
+      createdBy: string;
+    }
+  >;
 }
 
 /**
@@ -32,6 +41,8 @@ export class MemoryStore {
   private readonly flags: Flag[] = [];
   /** Rules per flag and environment, keyed by `workspace/flag/environment`. */
   private readonly targeting = new Map<string, { rules: TargetingRule[]; updatedAt: string }>();
+  /** Rollout versions per flag and environment, oldest first, same key as targeting. */
+  private readonly rolloutVersions = new Map<string, RolloutVersion[]>();
   private sequence = 0;
 
   constructor(private readonly now: () => Date = () => new Date()) {}
@@ -48,6 +59,17 @@ export class MemoryStore {
     }
     for (const { workspaceId, flagKey, environmentKey, rules } of seed.targeting ?? []) {
       store.setTargeting(workspaceId, flagKey, environmentKey, rules);
+    }
+    for (const rollout of seed.rollouts ?? []) {
+      const { workspaceId, flagKey, environmentKey, createdBy, ...plan } = rollout;
+      const baseVersion = store.listRolloutVersions(workspaceId, flagKey, environmentKey).length;
+      store.createRolloutVersion(
+        workspaceId,
+        flagKey,
+        environmentKey,
+        { ...plan, baseVersion },
+        createdBy,
+      );
     }
     return store;
   }
@@ -206,6 +228,72 @@ export class MemoryStore {
     };
   }
 
+  /** Every rollout version for one flag in one environment, oldest first. */
+  listRolloutVersions(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+  ): RolloutVersion[] {
+    this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    const versions = this.rolloutVersions.get(targetingKey(workspaceId, flagKey, environmentKey));
+    return (versions ?? []).map(cloneRolloutVersion);
+  }
+
+  getRolloutVersion(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+    version: number,
+  ): RolloutVersion | undefined {
+    const found = this.listRolloutVersions(workspaceId, flagKey, environmentKey).find(
+      (v) => v.version === version,
+    );
+    return found && cloneRolloutVersion(found);
+  }
+
+  /**
+   * Appends the next version. Versions are never edited or removed; the
+   * `baseVersion` check stops two authors from silently overwriting each
+   * other's plan.
+   */
+  createRolloutVersion(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+    input: NewRolloutVersion,
+    createdBy: string,
+  ): RolloutVersion {
+    const flag = this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    if (flag.archived) {
+      throw new ApiError(409, "CONFLICT", `Flag "${flagKey}" is archived`);
+    }
+    const key = targetingKey(workspaceId, flagKey, environmentKey);
+    const versions = this.rolloutVersions.get(key) ?? [];
+    const latest = versions.length;
+    if (input.baseVersion !== latest) {
+      throw new ApiError(
+        409,
+        "CONFLICT",
+        `Rollout is at version ${latest}, not ${input.baseVersion}; reload and try again`,
+      );
+    }
+    const created: RolloutVersion = {
+      workspaceId,
+      flagKey,
+      environmentKey,
+      version: latest + 1,
+      serve: input.serve,
+      stages: input.stages.map((stage) => ({ percentage: stage.percentage })),
+      salt: flag.salt,
+      note: input.note ?? "",
+      createdBy,
+      createdAt: this.now().toISOString(),
+    };
+    versions.push(created);
+    this.rolloutVersions.set(key, versions);
+    return cloneRolloutVersion(created);
+  }
+
   private requireEnvironment(workspaceId: string, environmentKey: string): void {
     const environment = this.environments.find(
       (e) => e.workspaceId === workspaceId && e.key === environmentKey,
@@ -252,4 +340,8 @@ function cloneRules(rules: readonly TargetingRule[]): TargetingRule[] {
     conditions: rule.conditions.map((c) => ({ ...c, values: [...c.values] })),
     ...(rule.rollout && { rollout: { ...rule.rollout } }),
   }));
+}
+
+function cloneRolloutVersion(version: RolloutVersion): RolloutVersion {
+  return { ...version, stages: version.stages.map((stage) => ({ ...stage })) };
 }
