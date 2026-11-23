@@ -1,3 +1,4 @@
+import type { FlagConfig, FlagTargeting, TargetingRule } from "@rolloutlab/evaluator";
 import type {
   Environment,
   Flag,
@@ -7,8 +8,6 @@ import type {
   NewFlag,
   Workspace,
 } from "./domain/types.js";
-import type { FlagConfig } from "./domain/evaluation.js";
-import type { FlagTargeting, TargetingRule } from "./domain/targeting.js";
 import { ApiError } from "./errors.js";
 
 export interface StoreSeed {

@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@rolloutlab/evaluator": "workspace:*",
     "fastify": "^5.1.0"
   },
   "devDependencies": {

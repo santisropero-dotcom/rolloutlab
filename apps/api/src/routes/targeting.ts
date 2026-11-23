@@ -1,5 +1,3 @@
-import type { FastifyInstance } from "fastify";
-import { authorize } from "../auth.js";
 import {
   MAX_CONDITIONS,
   MAX_RULES,
@@ -7,7 +5,9 @@ import {
   OPERATORS,
   ruleListProblems,
   type TargetingRule,
-} from "../domain/targeting.js";
+} from "@rolloutlab/evaluator";
+import type { FastifyInstance } from "fastify";
+import { authorize } from "../auth.js";
 import { ApiError } from "../errors.js";
 import type { MemoryStore } from "../store.js";
 import { KEY_PATTERN } from "./workspaces.js";

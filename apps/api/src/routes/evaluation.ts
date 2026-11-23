@@ -1,7 +1,11 @@
+import {
+  evaluateFlag,
+  valueTypeOf,
+  type EvaluationContext,
+  type FlagValue,
+} from "@rolloutlab/evaluator";
 import type { FastifyInstance } from "fastify";
 import { authorize } from "../auth.js";
-import { evaluateFlag, valueTypeOf, type FlagValue } from "../domain/evaluation.js";
-import type { EvaluationContext } from "../domain/targeting.js";
 import { ApiError } from "../errors.js";
 import type { MemoryStore } from "../store.js";
 

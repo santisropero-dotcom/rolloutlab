@@ -62,7 +62,7 @@ The demo seed has one rule in `storefront` / `development`: emails ending in `@r
 
 ## Cohort bucketing
 
-Percentage rollouts put each identity in one of 10,000 buckets (`src/domain/bucketing.ts`). The bucket comes from SHA-256 of the flag key, the flag's `salt` and the identity's subject key, so it is the same on every run and every server, with nothing stored.
+Percentage rollouts put each identity in one of 10,000 buckets (`packages/evaluator/src/bucketing.ts`). The bucket comes from SHA-256 of the flag key, the flag's `salt` and the identity's subject key, so it is the same on every run and every server, with nothing stored.
 
 - An identity is in a rollout of `p` % when its bucket is below `p × 100`. Percentages take up to two decimals (`12.5`, `0.01`).
 - Raising the percentage only adds identities; lowering it only removes them. Editing targeting rules doesn't move anyone's bucket.
@@ -73,7 +73,7 @@ With the demo salt, 104 of 1,000 synthetic identities (`synthetic-0000`…`synth
 
 ## Evaluation
 
-`POST …/environments/:environmentKey/flags/:flagKey/evaluate` returns the value of one flag for one identity (`src/domain/evaluation.ts`). The body carries the caller's typed default and the identity's attributes; `targetingKey` is the subject key used for bucketing.
+`POST …/environments/:environmentKey/flags/:flagKey/evaluate` returns the value of one flag for one identity (`packages/evaluator/src/evaluation.ts`). The body carries the caller's typed default and the identity's attributes; `targetingKey` is the subject key used for bucketing.
 
 ```sh
 curl -s -X POST localhost:4000/workspaces/storefront/environments/development/flags/new-checkout/evaluate \
