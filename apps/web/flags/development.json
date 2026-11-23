@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "environment": "development",
+  "flags": [
+    {
+      "key": "new-checkout",
+      "type": "boolean",
+      "defaultValue": false,
+      "salt": "new-checkout",
+      "rules": [
+        {
+          "id": "internal-staff",
+          "description": "Staff try the new checkout first.",
+          "conditions": [
+            { "attribute": "email", "operator": "ends_with", "values": ["@rolloutlab.test"] }
+          ],
+          "serve": true
+        },
+        {
+          "id": "ten-percent",
+          "description": "10% of all other shoppers.",
+          "conditions": [],
+          "serve": true,
+          "rollout": { "percentage": 10 }
+        }
+      ]
+    }
+  ]
+}
