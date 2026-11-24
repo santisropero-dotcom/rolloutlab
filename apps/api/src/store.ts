@@ -1,4 +1,10 @@
 import type { FlagConfig, FlagTargeting, TargetingRule } from "@rolloutlab/evaluator";
+import {
+  applyTransition,
+  INITIAL_STATE,
+  type RolloutState,
+  type TransitionAction,
+} from "./domain/rollout-state.js";
 import type { NewRolloutVersion, RolloutVersion } from "./domain/rollouts.js";
 import type {
   Environment,
@@ -10,6 +16,23 @@ import type {
   Workspace,
 } from "./domain/types.js";
 import { ApiError } from "./errors.js";
+
+export interface RolloutTransition {
+  sequence: number;
+  action: TransitionAction;
+  from: RolloutState;
+  to: RolloutState;
+  reason: string;
+  actor: string;
+  at: string;
+}
+
+export interface NewTransition {
+  action: TransitionAction;
+  /** The `sequence` the caller saw; a mismatch means someone moved first. */
+  baseSequence: number;
+  reason?: string;
+}
 
 export interface StoreSeed {
   workspaces: Workspace[];
@@ -43,6 +66,11 @@ export class MemoryStore {
   private readonly targeting = new Map<string, { rules: TargetingRule[]; updatedAt: string }>();
   /** Rollout versions per flag and environment, oldest first, same key as targeting. */
   private readonly rolloutVersions = new Map<string, RolloutVersion[]>();
+  /** Current rollout state and its transition history, same key as targeting. */
+  private readonly rolloutProgress = new Map<
+    string,
+    { state: RolloutState; history: RolloutTransition[] }
+  >();
   private sequence = 0;
 
   constructor(private readonly now: () => Date = () => new Date()) {}
@@ -294,6 +322,65 @@ export class MemoryStore {
     return cloneRolloutVersion(created);
   }
 
+  /** Where the rollout stands, plus every transition so far, oldest first. */
+  getRolloutProgress(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+  ): { state: RolloutState; history: RolloutTransition[] } {
+    this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    const saved = this.rolloutProgress.get(targetingKey(workspaceId, flagKey, environmentKey));
+    return {
+      state: { ...(saved?.state ?? INITIAL_STATE) },
+      history: (saved?.history ?? []).map(cloneTransition),
+    };
+  }
+
+  /**
+   * Moves the rollout one step. A stale `baseSequence` is a conflict; a move
+   * the state machine does not allow is an invalid transition. Neither
+   * changes anything.
+   */
+  transitionRollout(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+    input: NewTransition,
+    actor: string,
+  ): { state: RolloutState; transition: RolloutTransition } {
+    const flag = this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    const key = targetingKey(workspaceId, flagKey, environmentKey);
+    const saved = this.rolloutProgress.get(key) ?? { state: INITIAL_STATE, history: [] };
+    if (input.baseSequence !== saved.state.sequence) {
+      throw new ApiError(
+        409,
+        "CONFLICT",
+        `Rollout is at transition ${saved.state.sequence}, not ${input.baseSequence}; reload and try again`,
+      );
+    }
+    const result = applyTransition(saved.state, input.action, {
+      versions: this.rolloutVersions.get(key) ?? [],
+      flagArchived: flag.archived,
+    });
+    if (!result.ok) {
+      throw new ApiError(409, "INVALID_TRANSITION", `Cannot ${input.action}: ${result.problem}`);
+    }
+    const transition: RolloutTransition = {
+      sequence: result.state.sequence,
+      action: input.action,
+      from: { ...saved.state },
+      to: { ...result.state },
+      reason: input.reason ?? "",
+      actor,
+      at: this.now().toISOString(),
+    };
+    this.rolloutProgress.set(key, {
+      state: result.state,
+      history: [...saved.history, transition],
+    });
+    return { state: { ...result.state }, transition: cloneTransition(transition) };
+  }
+
   private requireEnvironment(workspaceId: string, environmentKey: string): void {
     const environment = this.environments.find(
       (e) => e.workspaceId === workspaceId && e.key === environmentKey,
@@ -344,4 +431,8 @@ function cloneRules(rules: readonly TargetingRule[]): TargetingRule[] {
 
 function cloneRolloutVersion(version: RolloutVersion): RolloutVersion {
   return { ...version, stages: version.stages.map((stage) => ({ ...stage })) };
+}
+
+function cloneTransition(transition: RolloutTransition): RolloutTransition {
+  return { ...transition, from: { ...transition.from }, to: { ...transition.to } };
 }

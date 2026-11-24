@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { authorize } from "../auth.js";
+import { ACTIONS_NEEDING_REASON, TRANSITION_ACTIONS } from "../domain/rollout-state.js";
 import {
   MAX_NOTE_LENGTH,
   MAX_STAGES,
@@ -7,7 +8,7 @@ import {
   type NewRolloutVersion,
 } from "../domain/rollouts.js";
 import { ApiError } from "../errors.js";
-import type { MemoryStore } from "../store.js";
+import type { MemoryStore, NewTransition } from "../store.js";
 
 const rolloutParams = {
   type: "object",
@@ -47,6 +48,17 @@ const newVersionBody = {
     },
     note: { type: "string", maxLength: MAX_NOTE_LENGTH },
     baseVersion: { type: "integer", minimum: 0 },
+  },
+} as const;
+
+const transitionBody = {
+  type: "object",
+  required: ["action", "baseSequence"],
+  additionalProperties: false,
+  properties: {
+    action: { type: "string", enum: [...TRANSITION_ACTIONS] },
+    baseSequence: { type: "integer", minimum: 0 },
+    reason: { type: "string", maxLength: MAX_NOTE_LENGTH },
   },
 } as const;
 
@@ -106,6 +118,40 @@ export function registerRolloutRoutes(app: FastifyInstance, store: MemoryStore):
         membership.userId,
       );
       return reply.code(201).send(created);
+    },
+  );
+
+  app.get<{ Params: RolloutParams }>(
+    path,
+    { schema: { params: rolloutParams } },
+    async (request) => {
+      const { workspaceId, flagKey, environmentKey } = request.params;
+      authorize(store, request, workspaceId, "workspace:read");
+      return store.getRolloutProgress(workspaceId, flagKey, environmentKey);
+    },
+  );
+
+  app.post<{ Params: RolloutParams; Body: NewTransition }>(
+    `${path}/transitions`,
+    { schema: { params: rolloutParams, body: transitionBody } },
+    async (request) => {
+      const { workspaceId, flagKey, environmentKey } = request.params;
+      const membership = authorize(store, request, workspaceId, "flags:write");
+      const reason = request.body.reason?.trim() ?? "";
+      if (ACTIONS_NEEDING_REASON.includes(request.body.action) && reason === "") {
+        throw new ApiError(
+          400,
+          "VALIDATION_FAILED",
+          `A reason is required to ${request.body.action.replace("_", " ")}`,
+        );
+      }
+      return store.transitionRollout(
+        workspaceId,
+        flagKey,
+        environmentKey,
+        { ...request.body, reason },
+        membership.userId,
+      );
     },
   );
 }

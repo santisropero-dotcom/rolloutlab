@@ -13,11 +13,12 @@ import type { EvaluationContext, TargetingRule } from "./targeting.js";
 
 const COUNTRIES = ["CO", "MX", "NZ", "US"] as const;
 
-interface Shopper {
+// A type alias, not an interface, so it fits EvaluationContext's index signature.
+type Shopper = {
   targetingKey: string;
   country: (typeof COUNTRIES)[number];
   email: string;
-}
+};
 
 /** 1,000 synthetic shoppers: countries in rotation, every 50th is staff. */
 const shoppers: Shopper[] = Array.from({ length: 1000 }, (_, i) => {

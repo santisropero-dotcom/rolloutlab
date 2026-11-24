@@ -16,7 +16,9 @@ import { readSnapshot, type SnapshotLoad } from "./flags";
 export const OPENFEATURE_DOMAIN = "storefront";
 
 /** `ROLLOUTLAB_FLAG_SNAPSHOT`, or `flags/development.json` in the web app. */
-export function snapshotPath(env: NodeJS.ProcessEnv = process.env): string {
+export function snapshotPath(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
   const configured = env.ROLLOUTLAB_FLAG_SNAPSHOT?.trim();
   return configured
     ? path.resolve(configured)

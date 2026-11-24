@@ -1,6 +1,6 @@
 # @rolloutlab/api
 
-Fastify API for workspaces, environments, flags, targeting rules and rollout plans. Data lives in memory for now and is seeded with synthetic demo workspaces on start.
+Fastify API for workspaces, environments, flags, targeting rules, rollout plans and rollout stages. Data lives in memory for now and is seeded with synthetic demo workspaces on start.
 
 ## Identity (local only)
 
@@ -38,6 +38,8 @@ A user outside a workspace gets `404`, the same answer as for a workspace that d
 | GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/versions` | read |
 | GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/versions/:version` | read |
 | POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/versions` | owner, editor |
+| GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout` | read |
+| POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/transitions` | owner, editor |
 
 Flag and environment keys are lowercase kebab case (`new-checkout`). New flags default to `false`. Errors use `{ "error": { "code", "message" } }`.
 
@@ -113,4 +115,39 @@ curl -s -X POST localhost:4000/workspaces/storefront/flags/new-checkout/environm
   -d '{"serve":true,"stages":[{"percentage":5},{"percentage":25},{"percentage":100}],"baseVersion":1}'
 ```
 
-The demo seed has version 1 in `storefront` / `production`: 10 % → 50 % → 100 %, written by `alice`. Moving between stages comes next.
+The demo seed has version 1 in `storefront` / `production`: 10 % → 50 % → 100 %, written by `alice`.
+
+## Rollout stages
+
+`GET …/rollout` returns where the rollout stands (`state`) and every move so far (`history`). `POST …/rollout/transitions` makes one move (`src/domain/rollout-state.ts`):
+
+```
+not_started ─start─▶ running ─advance─▶ … ─advance─▶ completed
+                     │  ▲                                │
+                 pause  resume                       roll_back
+                     ▼  │                                ▼
+                    paused ──────────roll_back──────▶ rolled_back
+```
+
+| Action | Allowed from | Result |
+|---|---|---|
+| `start` | `not_started`, `rolled_back`, `completed` (only once a newer version exists) | first stage of the latest version |
+| `advance` | `running` | next stage; reaching the last one (100 %) makes it `completed` |
+| `pause` | `running` | same stage, no further widening |
+| `resume` | `paused` | `running` on the same stage |
+| `roll_back` | `running`, `paused`, `completed` | `rolled_back`, 0 % |
+
+- Any other move is rejected with `409` and code `INVALID_TRANSITION`; the state and history stay as they were.
+- `baseSequence` is the `state.sequence` the caller saw (`0` at first). If someone moved the rollout in between, the request gets `409` `CONFLICT`.
+- `pause` and `roll_back` need a `reason` (up to 500 characters); it is kept in the history with the user and time.
+- A started rollout stays on its version. Publishing a new version doesn't change its stages; the new version is used at the next `start`.
+- On an archived flag, only `pause` and `roll_back` are allowed.
+- `state.percentage` is the share the current stage covers. Evaluation doesn't read it yet.
+
+```sh
+curl -s -X POST localhost:4000/workspaces/storefront/flags/new-checkout/environments/production/rollout/transitions \
+  -H 'x-rolloutlab-user: bob' -H 'content-type: application/json' \
+  -d '{"action":"start","baseSequence":0}'
+```
+
+The demo seed leaves the `storefront` / `production` rollout `not_started`.
