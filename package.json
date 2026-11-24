@@ -7,11 +7,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "pnpm -r --parallel dev",
+    "dev": "pnpm build:packages && pnpm -r --parallel dev",
     "build": "pnpm -r build",
+    "build:packages": "pnpm --filter \"./packages/**\" build",
     "lint": "eslint .",
-    "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
+    "typecheck": "pnpm build:packages && pnpm -r typecheck",
+    "test": "pnpm build:packages && pnpm -r test",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down"
   },

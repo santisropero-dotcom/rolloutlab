@@ -10,6 +10,9 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@openfeature/core": "^1.8.0",
+    "@openfeature/server-sdk": "^1.17.0",
+    "@rolloutlab/evaluator": "workspace:*",
     "next": "^15.0.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

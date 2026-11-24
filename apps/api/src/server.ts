@@ -1,6 +1,7 @@
 import Fastify, { type FastifyError } from "fastify";
 import { ApiError } from "./errors.js";
 import { registerEvaluationRoutes } from "./routes/evaluation.js";
+import { registerRolloutRoutes } from "./routes/rollouts.js";
 import { registerTargetingRoutes } from "./routes/targeting.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { createDemoStore } from "./seed.js";
@@ -44,6 +45,7 @@ export function buildServer(options: ServerOptions = {}) {
   registerWorkspaceRoutes(app, store);
   registerTargetingRoutes(app, store);
   registerEvaluationRoutes(app, store);
+  registerRolloutRoutes(app, store);
 
   return app;
 }
