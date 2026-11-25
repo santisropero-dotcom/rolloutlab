@@ -189,4 +189,67 @@ describe("release gates API", () => {
     });
     expect((await move("advance", 1)).statusCode).toBe(200);
   });
+
+  describe("threshold edge cases", () => {
+    it("advances when the canary sits exactly on every limit and blocks just below it", async () => {
+      await move("start", 0);
+      const metrics = canaryMetrics(0.03);
+      store.putCohortMetrics("storefront", "new-checkout", "production", metrics, "bob");
+      const { treatment, control } = metrics.totals;
+      const errorRate = treatment.errorRate as number;
+      const increase = errorRate - (control.errorRate as number);
+      const sample = {
+        minSubjectsPerCohort: Math.min(treatment.subjects, control.subjects),
+        minRequestsPerCohort: Math.min(treatment.requests, control.requests),
+      };
+
+      const tight = { ...DEFAULT_GATE_POLICY, ...sample, maxErrorRate: errorRate - 0.0001 };
+      expect((await putPolicy({ ...tight, maxErrorRateIncrease: increase })).statusCode).toBe(200);
+      const blocked = await move("advance", 1);
+      expect(blocked.statusCode).toBe(409);
+      expect(blocked.json().error.details.gate.breached).toEqual(["max_error_rate"]);
+
+      const exact = { ...DEFAULT_GATE_POLICY, ...sample, maxErrorRate: errorRate };
+      expect((await putPolicy({ ...exact, maxErrorRateIncrease: increase })).statusCode).toBe(200);
+      const res = await move("advance", 1);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().transition.gate.verdict).toBe("pass");
+    });
+
+    it("blocks when the sample is one subject short of the minimum", async () => {
+      await move("start", 0);
+      const metrics = canaryMetrics(0.01);
+      store.putCohortMetrics("storefront", "new-checkout", "production", metrics, "bob");
+      const smallest = Math.min(metrics.totals.treatment.subjects, metrics.totals.control.subjects);
+      await putPolicy({ ...DEFAULT_GATE_POLICY, minSubjectsPerCohort: smallest + 1 });
+
+      const res = await move("advance", 1);
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.details.gate).toMatchObject({ verdict: "insufficient_data", breached: [] });
+    });
+
+    it("judges every stage again with the latest metrics", async () => {
+      await move("start", 0);
+      store.putCohortMetrics("storefront", "new-checkout", "production", canaryMetrics(0.01), "bob");
+      expect((await move("advance", 1)).statusCode).toBe(200);
+
+      // The 50 % stage turns red: the next widening is refused.
+      store.putCohortMetrics("storefront", "new-checkout", "production", canaryMetrics(0.06, 1500), "bob");
+      const res = await move("advance", 2);
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe("GATE_BLOCKED");
+      const progress = await app.inject({ method: "GET", url: production, headers: as("carol") });
+      expect(progress.json().state).toMatchObject({ percentage: 50, sequence: 2 });
+    });
+
+    it("never gates pausing and resuming, even while the gate is red", async () => {
+      await move("start", 0);
+      store.putCohortMetrics("storefront", "new-checkout", "production", canaryMetrics(0.06), "bob");
+      expect((await move("pause", 1, { reason: "Investigating checkout errors" })).statusCode).toBe(200);
+      const resumed = await move("resume", 2);
+      expect(resumed.statusCode).toBe(200);
+      expect(resumed.json().transition.gate).toBeUndefined();
+      expect((await move("advance", 3)).statusCode).toBe(409);
+    });
+  });
 });
