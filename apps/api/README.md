@@ -1,6 +1,6 @@
 # @rolloutlab/api
 
-Fastify API for workspaces, environments, flags, targeting rules, rollout plans and rollout stages. Data lives in memory for now and is seeded with synthetic demo workspaces on start.
+Fastify API for workspaces, environments, flags, targeting rules, rollout plans, rollout stages and telemetry. Data lives in memory for now and is seeded with synthetic demo workspaces on start.
 
 ## Identity (local only)
 
@@ -13,11 +13,11 @@ Requests name a synthetic user in the `x-rolloutlab-user` header. There is no re
 | `carol` | `storefront` | viewer |
 | `dave` | `payments` | owner |
 
-| Role | Read | Create/update flags | Create environments |
-|---|---|---|---|
-| owner | ✅ | ✅ | ✅ |
-| editor | ✅ | ✅ | — |
-| viewer | ✅ | — | — |
+| Role | Read | Create/update flags | Create environments | Send telemetry |
+|---|---|---|---|---|
+| owner | ✅ | ✅ | ✅ | ✅ |
+| editor | ✅ | ✅ | — | ✅ |
+| viewer | ✅ | — | — | — |
 
 A user outside a workspace gets `404`, the same answer as for a workspace that does not exist.
 
@@ -40,6 +40,8 @@ A user outside a workspace gets `404`, the same answer as for a workspace that d
 | POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/versions` | owner, editor |
 | GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout` | read |
 | POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/transitions` | owner, editor |
+| GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/events` | read |
+| POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/events` | owner, editor |
 
 Flag and environment keys are lowercase kebab case (`new-checkout`). New flags default to `false`. Errors use `{ "error": { "code", "message" } }`.
 
@@ -151,3 +153,36 @@ curl -s -X POST localhost:4000/workspaces/storefront/flags/new-checkout/environm
 ```
 
 The demo seed leaves the `storefront` / `production` rollout `not_started`.
+
+## Telemetry
+
+Services report how each request went for the flag value they served (`src/domain/telemetry.ts`). Later steps compare the treatment cohort (`value: true`) with the control cohort (`value: false`).
+
+```sh
+curl -s -X POST localhost:4000/workspaces/storefront/flags/new-checkout/environments/production/telemetry/events \
+  -H 'x-rolloutlab-user: bob' -H 'content-type: application/json' \
+  -d '{"events":[{"eventId":"req-1","subjectKey":"synthetic-0001","value":true,"outcome":"error","latencyMs":340,"occurredAt":"2026-01-12T09:30:00Z"}]}'
+# {"received":1,"accepted":1,"duplicates":0,"rejected":[]}
+```
+
+- `eventId` (1–128 of letters, digits, `.`, `_`, `:`, `-`) is chosen by the sender and identifies the event within one flag and environment.
+- `outcome` is `success` or `error`; `latencyMs` (whole milliseconds, up to 600,000) is optional; `occurredAt` needs a time zone and may be at most 5 minutes ahead of the server clock. It is stored in UTC.
+- Up to 1,000 events per request. A batch that doesn't have this shape is rejected as a whole (`400`).
+- Each event is checked on its own. Invalid events are listed in `rejected` with their `index` and the request answers `207`; the rest are stored.
+
+**Deduplication.** Resending an `eventId` with the same content counts as a duplicate and changes nothing, so a sender can retry a batch, or replay a fixture, any number of times. "Same content" compares subject, value, outcome, latency and the instant, so `09:30Z` and `10:30+01:00` match. The same `eventId` with different content is rejected as `CONFLICTING_DUPLICATE`; the first version stays.
+
+`GET …/telemetry/events?limit=100&after=<cursor>` lists stored events oldest first (ties by `eventId`), up to 500 per page, with `total` and `nextCursor`. Archived flags still accept telemetry.
+
+### Synthetic replay
+
+`src/domain/telemetry-fixture.ts` generates checkout traffic for `synthetic-0000`…`synthetic-0999`, three requests each. Treatment membership uses the same bucketing as evaluation; errors, latencies and times come from a hash of each event id, so the fixture is identical on every run. With the API running:
+
+```sh
+pnpm --filter @rolloutlab/api telemetry:replay --percentage 10 --treatment-error-rate 0.06 --control-error-rate 0.01
+# {"received":3000,"accepted":3000,"duplicates":0,"rejected":0}
+# run again:
+# {"received":3000,"accepted":0,"duplicates":3000,"rejected":0}
+```
+
+Telemetry is kept in memory with the rest of the data; nothing aggregates it yet.

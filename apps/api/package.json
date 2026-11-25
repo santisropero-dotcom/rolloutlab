@@ -9,7 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "telemetry:replay": "tsx src/replay-telemetry.ts"
   },
   "dependencies": {
     "@rolloutlab/evaluator": "workspace:*",

@@ -6,6 +6,15 @@ import {
   type TransitionAction,
 } from "./domain/rollout-state.js";
 import type { NewRolloutVersion, RolloutVersion } from "./domain/rollouts.js";
+import {
+  compareEvents,
+  eventProblems,
+  normaliseEvent,
+  type EventPosition,
+  type IngestResult,
+  type TelemetryEvent,
+  type TelemetryEventInput,
+} from "./domain/telemetry.js";
 import type {
   Environment,
   Flag,
@@ -32,6 +41,13 @@ export interface NewTransition {
   /** The `sequence` the caller saw; a mismatch means someone moved first. */
   baseSequence: number;
   reason?: string;
+}
+
+export interface TelemetryPage {
+  items: TelemetryEvent[];
+  total: number;
+  /** Pass as `after` to get the next page; `null` on the last page. */
+  nextCursor: string | null;
 }
 
 export interface StoreSeed {
@@ -70,6 +86,11 @@ export class MemoryStore {
   private readonly rolloutProgress = new Map<
     string,
     { state: RolloutState; history: RolloutTransition[] }
+  >();
+  /** Stored telemetry per flag and environment, same key as targeting. */
+  private readonly telemetry = new Map<
+    string,
+    { byId: Map<string, TelemetryEvent>; sorted: TelemetryEvent[] | null }
   >();
   private sequence = 0;
 
@@ -381,6 +402,99 @@ export class MemoryStore {
     return { state: { ...result.state }, transition: cloneTransition(transition) };
   }
 
+  /**
+   * Stores a batch of events for one flag in one environment.
+   *
+   * Events are handled in order and independently: invalid ones are listed in
+   * `rejected` without stopping the rest. An event id that is already stored
+   * with the same content counts as a duplicate and changes nothing, so a
+   * sender can retry a whole batch, or replay a fixture, as often as it likes.
+   * The same id with different content is rejected rather than overwriting
+   * what was recorded first. Archived flags still take telemetry, since
+   * services may keep reporting while a flag is wound down.
+   */
+  ingestTelemetry(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+    events: readonly TelemetryEventInput[],
+  ): IngestResult {
+    this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    const key = targetingKey(workspaceId, flagKey, environmentKey);
+    const bucket = this.telemetry.get(key) ?? { byId: new Map(), sorted: null };
+    const now = this.now();
+    const result: IngestResult = {
+      received: events.length,
+      accepted: 0,
+      duplicates: 0,
+      rejected: [],
+    };
+    events.forEach((input, index) => {
+      const problems = eventProblems(input, now);
+      if (problems.length > 0) {
+        result.rejected.push({
+          index,
+          eventId: input.eventId,
+          code: "INVALID_EVENT",
+          message: problems.join("; "),
+        });
+        return;
+      }
+      const event = normaliseEvent({ workspaceId, flagKey, environmentKey }, input, now);
+      const existing = bucket.byId.get(event.eventId);
+      if (existing) {
+        if (existing.fingerprint === event.fingerprint) {
+          result.duplicates += 1;
+        } else {
+          result.rejected.push({
+            index,
+            eventId: event.eventId,
+            code: "CONFLICTING_DUPLICATE",
+            message: `Event "${event.eventId}" was already recorded with different content`,
+          });
+        }
+        return;
+      }
+      bucket.byId.set(event.eventId, event);
+      bucket.sorted = null;
+      result.accepted += 1;
+    });
+    this.telemetry.set(key, bucket);
+    return result;
+  }
+
+  /**
+   * Stored events, oldest `occurredAt` first. The cursor is the position of
+   * the last event returned, so late events that land earlier in the order
+   * never make a page repeat or skip anything already listed after it.
+   */
+  listTelemetry(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+    options: { after?: string; limit: number },
+  ): TelemetryPage {
+    this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    const position = options.after === undefined ? undefined : decodeCursor(options.after);
+    const bucket = this.telemetry.get(targetingKey(workspaceId, flagKey, environmentKey));
+    if (!bucket) return { items: [], total: 0, nextCursor: null };
+    bucket.sorted ??= [...bucket.byId.values()].sort(compareEvents);
+    const sorted = bucket.sorted;
+    let start = 0;
+    if (position) {
+      const index = sorted.findIndex((e) => compareEvents(e, position) > 0);
+      start = index === -1 ? sorted.length : index;
+    }
+    const items = sorted.slice(start, start + options.limit);
+    const last = items.at(-1);
+    const more = start + items.length < sorted.length;
+    return {
+      items: items.map((e) => ({ ...e })),
+      total: sorted.length,
+      nextCursor: more && last ? encodeCursor(last) : null,
+    };
+  }
+
   private requireEnvironment(workspaceId: string, environmentKey: string): void {
     const environment = this.environments.find(
       (e) => e.workspaceId === workspaceId && e.key === environmentKey,
@@ -419,6 +533,28 @@ export class MemoryStore {
 
 function targetingKey(workspaceId: string, flagKey: string, environmentKey: string): string {
   return `${workspaceId}/${flagKey}/${environmentKey}`;
+}
+
+function encodeCursor(event: EventPosition): string {
+  return Buffer.from(JSON.stringify([event.occurredAt, event.eventId])).toString("base64url");
+}
+
+function decodeCursor(cursor: string): EventPosition {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    parsed = undefined;
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 2 ||
+    typeof parsed[0] !== "string" ||
+    typeof parsed[1] !== "string"
+  ) {
+    throw new ApiError(400, "VALIDATION_FAILED", "Invalid cursor");
+  }
+  return { occurredAt: parsed[0], eventId: parsed[1] };
 }
 
 function cloneRules(rules: readonly TargetingRule[]): TargetingRule[] {
