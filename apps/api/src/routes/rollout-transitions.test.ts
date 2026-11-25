@@ -1,5 +1,8 @@
+import { aggregateCohortMetrics } from "@rolloutlab/metrics";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { USER_HEADER } from "../auth.js";
+import { syntheticCheckoutTelemetry } from "../domain/telemetry-fixture.js";
+import { normaliseEvent } from "../domain/telemetry.js";
 import { demoSeed } from "../seed.js";
 import { buildServer } from "../server.js";
 import { MemoryStore } from "../store.js";
@@ -16,11 +19,27 @@ function as(user: string) {
   return { [USER_HEADER]: user };
 }
 
+// Both cohorts at the same 1 % error rate, so the release gates pass and
+// these tests exercise the state machine alone (gates have their own suite).
+const scope = { workspaceId: "storefront", flagKey: "new-checkout", environmentKey: "production" };
+const healthyMetrics = aggregateCohortMetrics(
+  syntheticCheckoutTelemetry({
+    flagKey: "new-checkout",
+    salt: "new-checkout",
+    percentage: 50,
+    start: "2026-01-12T09:00:00.000Z",
+    treatmentErrorRate: 0.01,
+    controlErrorRate: 0.01,
+  }).map((e) => normaliseEvent(scope, e, fixedNow())),
+);
+
 describe("rollout transitions API", () => {
   let app: App;
 
   beforeEach(async () => {
-    app = buildServer({ store: MemoryStore.fromSeed(demoSeed, fixedNow), logger: false });
+    const store = MemoryStore.fromSeed(demoSeed, fixedNow);
+    store.putCohortMetrics("storefront", "new-checkout", "production", healthyMetrics, "bob");
+    app = buildServer({ store, logger: false });
     await app.ready();
   });
 

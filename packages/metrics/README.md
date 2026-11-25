@@ -6,6 +6,7 @@ Cohort metrics from flag telemetry, shared by the worker that computes them and 
 |---|---|
 | `src/aggregate.ts` | `aggregateCohortMetrics`: totals and time windows per cohort |
 | `src/validate.ts` | `cohortMetricsProblems`: checks a report received over the wire |
+| `src/gates.ts` | `evaluateGates`, `describeBlock`, `gatePolicyProblems`, `DEFAULT_GATE_POLICY`: release-gate thresholds and minimum sample sizes |
 
 Events served `true` form the **treatment** cohort, events served `false` the **control** cohort. For each cohort, in total and per window:
 
@@ -16,5 +17,7 @@ Events served `true` form the **treatment** cohort, events served `false` the **
 Windows are aligned to the window length in UTC (`09:00`, `09:15`, … for 15 minutes); only windows with events are listed.
 
 The result depends only on the set of events: order doesn't matter and a repeated event id counts once. `sourceDigest` is a SHA-256 over the events sorted by id, so two reports with the same digest were computed from the same telemetry.
+
+`evaluateGates(metrics, policy)` judges the totals: both cohorts must reach the minimum subjects and requests before the error-rate and p95-latency limits count, and a verdict of `fail` or `insufficient_data` blocks expansion. See the API README's "Release gates" section for the rules.
 
 Built to `dist/` by `pnpm build:packages`.

@@ -1,5 +1,12 @@
 import type { FlagConfig, FlagTargeting, TargetingRule } from "@rolloutlab/evaluator";
-import type { CohortMetrics } from "@rolloutlab/metrics";
+import {
+  DEFAULT_GATE_POLICY,
+  describeBlock,
+  evaluateGates,
+  type CohortMetrics,
+  type GateEvaluation,
+  type GatePolicy,
+} from "@rolloutlab/metrics";
 import {
   applyTransition,
   INITIAL_STATE,
@@ -35,6 +42,8 @@ export interface RolloutTransition {
   reason: string;
   actor: string;
   at: string;
+  /** The release-gate evaluation that allowed an `advance`; absent for other actions. */
+  gate?: GateEvaluation;
 }
 
 export interface NewTransition {
@@ -59,6 +68,28 @@ export interface StoredMetrics {
   computedAt: string;
   /** User the worker reported as. */
   computedBy: string;
+}
+
+export interface StoredGatePolicy {
+  workspaceId: string;
+  flagKey: string;
+  environmentKey: string;
+  policy: GatePolicy;
+  /** `default` until someone saves a policy for this flag and environment. */
+  source: "default" | "custom";
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+export interface GateReport {
+  workspaceId: string;
+  flagKey: string;
+  environmentKey: string;
+  policy: StoredGatePolicy;
+  evaluation: GateEvaluation;
+  /** When the judged metrics were computed, or `null` if there are none yet. */
+  metricsComputedAt: string | null;
+  evaluatedAt: string;
 }
 
 export interface StoreSeed {
@@ -105,6 +136,11 @@ export class MemoryStore {
   >();
   /** Latest cohort metrics per flag and environment, same key as targeting. */
   private readonly metrics = new Map<string, StoredMetrics>();
+  /** Saved release-gate policies, same key as targeting. */
+  private readonly gatePolicies = new Map<
+    string,
+    { policy: GatePolicy; updatedAt: string; updatedBy: string }
+  >();
   private sequence = 0;
 
   constructor(private readonly now: () => Date = () => new Date()) {}
@@ -399,6 +435,19 @@ export class MemoryStore {
     if (!result.ok) {
       throw new ApiError(409, "INVALID_TRANSITION", `Cannot ${input.action}: ${result.problem}`);
     }
+    // Only `advance` widens exposure beyond what the current stage already
+    // serves, so only it has to clear the release gates. Pausing and rolling
+    // back must always work, and `start`/`resume` go back to a stage that was
+    // already allowed (or the first, which is what produces the evidence).
+    let gate: GateEvaluation | undefined;
+    if (input.action === "advance") {
+      gate = this.evaluateReleaseGates(workspaceId, flagKey, environmentKey).evaluation;
+      if (gate.verdict !== "pass") {
+        throw new ApiError(409, "GATE_BLOCKED", `Cannot advance: ${describeBlock(gate)}`, {
+          gate,
+        });
+      }
+    }
     const transition: RolloutTransition = {
       sequence: result.state.sequence,
       action: input.action,
@@ -407,6 +456,7 @@ export class MemoryStore {
       reason: input.reason ?? "",
       actor,
       at: this.now().toISOString(),
+      ...(gate && { gate }),
     };
     this.rolloutProgress.set(key, {
       state: result.state,
@@ -551,6 +601,56 @@ export class MemoryStore {
     return structuredClone(stored);
   }
 
+  /** The saved release-gate policy, or the default when none was saved. */
+  getGatePolicy(workspaceId: string, flagKey: string, environmentKey: string): StoredGatePolicy {
+    this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    const saved = this.gatePolicies.get(targetingKey(workspaceId, flagKey, environmentKey));
+    return {
+      workspaceId,
+      flagKey,
+      environmentKey,
+      policy: { ...(saved?.policy ?? DEFAULT_GATE_POLICY) },
+      source: saved ? "custom" : "default",
+      updatedAt: saved?.updatedAt ?? null,
+      updatedBy: saved?.updatedBy ?? null,
+    };
+  }
+
+  /** Replaces the whole policy; the caller validates it first. */
+  setGatePolicy(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+    policy: GatePolicy,
+    updatedBy: string,
+  ): StoredGatePolicy {
+    const flag = this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    if (flag.archived) {
+      throw new ApiError(409, "CONFLICT", `Flag "${flagKey}" is archived`);
+    }
+    this.gatePolicies.set(targetingKey(workspaceId, flagKey, environmentKey), {
+      policy: { ...policy },
+      updatedAt: this.now().toISOString(),
+      updatedBy,
+    });
+    return this.getGatePolicy(workspaceId, flagKey, environmentKey);
+  }
+
+  /** Judges the latest cohort metrics against the gate policy. */
+  evaluateReleaseGates(workspaceId: string, flagKey: string, environmentKey: string): GateReport {
+    const policy = this.getGatePolicy(workspaceId, flagKey, environmentKey);
+    const stored = this.metrics.get(targetingKey(workspaceId, flagKey, environmentKey));
+    return {
+      workspaceId,
+      flagKey,
+      environmentKey,
+      policy,
+      evaluation: evaluateGates(stored?.metrics ?? null, policy.policy),
+      metricsComputedAt: stored?.computedAt ?? null,
+      evaluatedAt: this.now().toISOString(),
+    };
+  }
+
   private requireEnvironment(workspaceId: string, environmentKey: string): void {
     const environment = this.environments.find(
       (e) => e.workspaceId === workspaceId && e.key === environmentKey,
@@ -626,5 +726,10 @@ function cloneRolloutVersion(version: RolloutVersion): RolloutVersion {
 }
 
 function cloneTransition(transition: RolloutTransition): RolloutTransition {
-  return { ...transition, from: { ...transition.from }, to: { ...transition.to } };
+  return {
+    ...transition,
+    from: { ...transition.from },
+    to: { ...transition.to },
+    ...(transition.gate && { gate: structuredClone(transition.gate) }),
+  };
 }

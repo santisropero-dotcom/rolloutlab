@@ -21,7 +21,13 @@ export function buildServer(options: ServerOptions = {}) {
     if (error instanceof ApiError) {
       return reply
         .code(error.statusCode)
-        .send({ error: { code: error.code, message: error.message } });
+        .send({
+          error: {
+            code: error.code,
+            message: error.message,
+            ...(error.details !== undefined && { details: error.details }),
+          },
+        });
     }
     const fastifyError = error as FastifyError;
     if (fastifyError.validation) {
