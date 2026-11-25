@@ -8,11 +8,15 @@
 export const ROLES = ["owner", "editor", "viewer"] as const;
 export type Role = (typeof ROLES)[number];
 
-export type Permission = "workspace:read" | "flags:write" | "environments:write";
+export type Permission =
+  | "workspace:read"
+  | "flags:write"
+  | "environments:write"
+  | "telemetry:write";
 
 const grants: Readonly<Record<Role, readonly Permission[]>> = {
-  owner: ["workspace:read", "flags:write", "environments:write"],
-  editor: ["workspace:read", "flags:write"],
+  owner: ["workspace:read", "flags:write", "environments:write", "telemetry:write"],
+  editor: ["workspace:read", "flags:write", "telemetry:write"],
   viewer: ["workspace:read"],
 };
 

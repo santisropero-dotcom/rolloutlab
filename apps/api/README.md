@@ -1,6 +1,6 @@
 # @rolloutlab/api
 
-Fastify API for workspaces, environments, flags, targeting rules, rollout plans and rollout stages. Data lives in memory for now and is seeded with synthetic demo workspaces on start.
+Fastify API for workspaces, environments, flags, targeting rules, rollout plans, rollout stages and telemetry. Data lives in memory for now and is seeded with synthetic demo workspaces on start.
 
 ## Identity (local only)
 
@@ -13,11 +13,11 @@ Requests name a synthetic user in the `x-rolloutlab-user` header. There is no re
 | `carol` | `storefront` | viewer |
 | `dave` | `payments` | owner |
 
-| Role | Read | Create/update flags | Create environments |
-|---|---|---|---|
-| owner | ✅ | ✅ | ✅ |
-| editor | ✅ | ✅ | — |
-| viewer | ✅ | — | — |
+| Role | Read | Create/update flags | Create environments | Send telemetry and metrics |
+|---|---|---|---|---|
+| owner | ✅ | ✅ | ✅ | ✅ |
+| editor | ✅ | ✅ | — | ✅ |
+| viewer | ✅ | — | — | — |
 
 A user outside a workspace gets `404`, the same answer as for a workspace that does not exist.
 
@@ -40,8 +40,15 @@ A user outside a workspace gets `404`, the same answer as for a workspace that d
 | POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/versions` | owner, editor |
 | GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout` | read |
 | POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/transitions` | owner, editor |
+| GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/gates` | read |
+| PUT | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/gates` | owner, editor |
+| GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/gates/evaluation` | read |
+| GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/events` | read |
+| POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/events` | owner, editor |
+| GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/metrics` | read |
+| PUT | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/metrics` | owner, editor |
 
-Flag and environment keys are lowercase kebab case (`new-checkout`). New flags default to `false`. Errors use `{ "error": { "code", "message" } }`.
+Flag and environment keys are lowercase kebab case (`new-checkout`). New flags default to `false`. Errors use `{ "error": { "code", "message" } }`, plus `details` where there is more to say (a blocked advance includes the gate evaluation).
 
 ```sh
 curl -s localhost:4000/workspaces/storefront/flags -H 'x-rolloutlab-user: carol'
@@ -151,3 +158,79 @@ curl -s -X POST localhost:4000/workspaces/storefront/flags/new-checkout/environm
 ```
 
 The demo seed leaves the `storefront` / `production` rollout `not_started`.
+
+## Telemetry
+
+Services report how each request went for the flag value they served (`src/domain/telemetry.ts`). Later steps compare the treatment cohort (`value: true`) with the control cohort (`value: false`).
+
+```sh
+curl -s -X POST localhost:4000/workspaces/storefront/flags/new-checkout/environments/production/telemetry/events \
+  -H 'x-rolloutlab-user: bob' -H 'content-type: application/json' \
+  -d '{"events":[{"eventId":"req-1","subjectKey":"synthetic-0001","value":true,"outcome":"error","latencyMs":340,"occurredAt":"2026-01-12T09:30:00Z"}]}'
+# {"received":1,"accepted":1,"duplicates":0,"rejected":[]}
+```
+
+- `eventId` (1–128 of letters, digits, `.`, `_`, `:`, `-`) is chosen by the sender and identifies the event within one flag and environment.
+- `outcome` is `success` or `error`; `latencyMs` (whole milliseconds, up to 600,000) is optional; `occurredAt` needs a time zone and may be at most 5 minutes ahead of the server clock. It is stored in UTC.
+- Up to 1,000 events per request. A batch that doesn't have this shape is rejected as a whole (`400`).
+- Each event is checked on its own. Invalid events are listed in `rejected` with their `index` and the request answers `207`; the rest are stored.
+
+**Deduplication.** Resending an `eventId` with the same content counts as a duplicate and changes nothing, so a sender can retry a batch, or replay a fixture, any number of times. "Same content" compares subject, value, outcome, latency and the instant, so `09:30Z` and `10:30+01:00` match. The same `eventId` with different content is rejected as `CONFLICTING_DUPLICATE`; the first version stays.
+
+`GET …/telemetry/events?limit=100&after=<cursor>` lists stored events oldest first (ties by `eventId`), up to 500 per page, with `total` and `nextCursor`. Archived flags still accept telemetry.
+
+### Synthetic replay
+
+`src/domain/telemetry-fixture.ts` generates checkout traffic for `synthetic-0000`…`synthetic-0999`, three requests each. Treatment membership uses the same bucketing as evaluation; errors, latencies and times come from a hash of each event id, so the fixture is identical on every run. With the API running:
+
+```sh
+pnpm --filter @rolloutlab/api telemetry:replay --percentage 10 --treatment-error-rate 0.06 --control-error-rate 0.01
+# {"received":3000,"accepted":3000,"duplicates":0,"rejected":0}
+# run again:
+# {"received":3000,"accepted":0,"duplicates":3000,"rejected":0}
+```
+
+Telemetry is kept in memory with the rest of the data.
+
+### Cohort metrics
+
+The metrics worker (`apps/worker`) aggregates the stored events with `@rolloutlab/metrics` and sends the result to `PUT …/telemetry/metrics`; `GET …/telemetry/metrics` returns the latest report with `computedAt` and `computedBy`, or `404` before the first one.
+
+- The report is checked as a whole: schema version, window length, timestamps, digest, and that windows and totals add up to `eventCount`. Any problem → `400 VALIDATION_FAILED` listing all of them.
+- Telemetry is never deleted, so a report covering fewer events than the stored one comes from an older read and is refused with `409 STALE_METRICS`.
+
+```sh
+curl -s localhost:4000/workspaces/storefront/flags/new-checkout/environments/production/telemetry/metrics \
+  -H 'x-rolloutlab-user: carol'
+# {"workspaceId":"storefront",…,"metrics":{"eventCount":3000,"totals":{"treatment":{…},"control":{…}},"windows":[…]},"computedAt":"…","computedBy":"bob"}
+```
+
+## Release gates
+
+`advance` is the only transition that widens exposure, so it must clear the release gates first. The rules come from `@rolloutlab/metrics` and are judged against the latest cohort metrics for the flag and environment:
+
+| Field | Default | Rule |
+|---|---|---|
+| `minSubjectsPerCohort` | 100 | both cohorts need this many distinct subjects before any limit is judged |
+| `minRequestsPerCohort` | 200 | both cohorts need this many requests before any limit is judged |
+| `maxErrorRate` | 0.02 | treatment error rate (0–1) |
+| `maxErrorRateIncrease` | 0.01 | treatment − control error rate |
+| `maxP95LatencyMs` | `null` (off) | treatment p95 latency |
+| `maxP95LatencyIncreaseMs` | 100 | treatment − control p95 latency |
+
+Limits are inclusive: exactly at the limit passes. `null` turns a limit off; at least one must stay on.
+
+- `GET …/rollout/gates` returns the saved policy, or the defaults with `source: "default"`. `PUT` replaces the whole policy (every field required; strings such as `"0.02"` are refused, not coerced) → `400 VALIDATION_FAILED` listing every problem.
+- `GET …/rollout/gates/evaluation` returns the verdict, one check per rule with the observed value, limit and a sentence, the breached rules, and which metrics were judged (`sourceDigest`, `eventCount`, `metricsComputedAt`).
+- Verdicts: `fail` if any limit is breached; otherwise `insufficient_data` if a cohort is below the minimum sample, a latency rule has no latencies, or no metrics exist yet; otherwise `pass`. Too little data never passes.
+- `advance` with any verdict other than `pass` → `409 GATE_BLOCKED`; the message names the breached rules and `error.details.gate` holds the full evaluation. The rollout stays where it was. A successful `advance` keeps its evaluation in the history as `gate`.
+- `start`, `pause`, `resume` and `roll_back` are never gated: rolling back a red canary must always work.
+
+Metrics currently cover all telemetry for the flag and environment, not just the current stage.
+
+```sh
+# after the synthetic replay (treatment 6 % errors) and one worker run:
+curl -s -X POST localhost:4000/workspaces/storefront/flags/new-checkout/environments/production/rollout/transitions \
+  -H 'x-rolloutlab-user: bob' -H 'content-type: application/json' -d '{"action":"advance","baseSequence":1}'
+# 409 {"error":{"code":"GATE_BLOCKED","message":"Cannot advance: Release gate breached: Treatment error rate 5.13 % is above the 2 % limit; Treatment errors exceed control by 4.09 pp, more than the 1 pp allowed","details":{"gate":{…}}}}
+```

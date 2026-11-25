@@ -3,9 +3,24 @@ import { can, ROLES, type Permission, type Role } from "./roles.js";
 
 describe("role permissions", () => {
   const expected: Record<Role, Record<Permission, boolean>> = {
-    owner: { "workspace:read": true, "flags:write": true, "environments:write": true },
-    editor: { "workspace:read": true, "flags:write": true, "environments:write": false },
-    viewer: { "workspace:read": true, "flags:write": false, "environments:write": false },
+    owner: {
+      "workspace:read": true,
+      "flags:write": true,
+      "environments:write": true,
+      "telemetry:write": true,
+    },
+    editor: {
+      "workspace:read": true,
+      "flags:write": true,
+      "environments:write": false,
+      "telemetry:write": true,
+    },
+    viewer: {
+      "workspace:read": true,
+      "flags:write": false,
+      "environments:write": false,
+      "telemetry:write": false,
+    },
   };
 
   for (const role of ROLES) {

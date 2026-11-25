@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { gatePolicyProblems, type GatePolicy } from "@rolloutlab/metrics";
 import { authorize } from "../auth.js";
 import { ACTIONS_NEEDING_REASON, TRANSITION_ACTIONS } from "../domain/rollout-state.js";
 import {
@@ -152,6 +153,49 @@ export function registerRolloutRoutes(app: FastifyInstance, store: MemoryStore):
         { ...request.body, reason },
         membership.userId,
       );
+    },
+  );
+
+  app.get<{ Params: RolloutParams }>(
+    `${path}/gates`,
+    { schema: { params: rolloutParams } },
+    async (request) => {
+      const { workspaceId, flagKey, environmentKey } = request.params;
+      authorize(store, request, workspaceId, "workspace:read");
+      return store.getGatePolicy(workspaceId, flagKey, environmentKey);
+    },
+  );
+
+  // No body schema: Fastify's Ajv would coerce "0.02" into a number, and a
+  // gate limit should be exactly what the author typed. `gatePolicyProblems`
+  // checks every field instead.
+  app.put<{ Params: RolloutParams; Body: unknown }>(
+    `${path}/gates`,
+    { schema: { params: rolloutParams } },
+    async (request) => {
+      const { workspaceId, flagKey, environmentKey } = request.params;
+      const membership = authorize(store, request, workspaceId, "flags:write");
+      const problems = gatePolicyProblems(request.body);
+      if (problems.length > 0) {
+        throw new ApiError(400, "VALIDATION_FAILED", problems.join("; "));
+      }
+      return store.setGatePolicy(
+        workspaceId,
+        flagKey,
+        environmentKey,
+        request.body as GatePolicy,
+        membership.userId,
+      );
+    },
+  );
+
+  app.get<{ Params: RolloutParams }>(
+    `${path}/gates/evaluation`,
+    { schema: { params: rolloutParams } },
+    async (request) => {
+      const { workspaceId, flagKey, environmentKey } = request.params;
+      authorize(store, request, workspaceId, "workspace:read");
+      return store.evaluateReleaseGates(workspaceId, flagKey, environmentKey);
     },
   );
 }

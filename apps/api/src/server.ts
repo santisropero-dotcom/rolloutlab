@@ -3,6 +3,7 @@ import { ApiError } from "./errors.js";
 import { registerEvaluationRoutes } from "./routes/evaluation.js";
 import { registerRolloutRoutes } from "./routes/rollouts.js";
 import { registerTargetingRoutes } from "./routes/targeting.js";
+import { registerTelemetryRoutes } from "./routes/telemetry.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { createDemoStore } from "./seed.js";
 import type { MemoryStore } from "./store.js";
@@ -20,7 +21,13 @@ export function buildServer(options: ServerOptions = {}) {
     if (error instanceof ApiError) {
       return reply
         .code(error.statusCode)
-        .send({ error: { code: error.code, message: error.message } });
+        .send({
+          error: {
+            code: error.code,
+            message: error.message,
+            ...(error.details !== undefined && { details: error.details }),
+          },
+        });
     }
     const fastifyError = error as FastifyError;
     if (fastifyError.validation) {
@@ -46,6 +53,7 @@ export function buildServer(options: ServerOptions = {}) {
   registerTargetingRoutes(app, store);
   registerEvaluationRoutes(app, store);
   registerRolloutRoutes(app, store);
+  registerTelemetryRoutes(app, store);
 
   return app;
 }
