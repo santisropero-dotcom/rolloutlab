@@ -4,6 +4,7 @@ export type ApiErrorCode =
   | "NOT_FOUND"
   | "CONFLICT"
   | "INVALID_TRANSITION"
+  | "STALE_METRICS"
   | "VALIDATION_FAILED";
 
 /** An error that maps directly to an HTTP response with a stable code. */

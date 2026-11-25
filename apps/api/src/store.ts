@@ -1,4 +1,5 @@
 import type { FlagConfig, FlagTargeting, TargetingRule } from "@rolloutlab/evaluator";
+import type { CohortMetrics } from "@rolloutlab/metrics";
 import {
   applyTransition,
   INITIAL_STATE,
@@ -50,6 +51,16 @@ export interface TelemetryPage {
   nextCursor: string | null;
 }
 
+export interface StoredMetrics {
+  workspaceId: string;
+  flagKey: string;
+  environmentKey: string;
+  metrics: CohortMetrics;
+  computedAt: string;
+  /** User the worker reported as. */
+  computedBy: string;
+}
+
 export interface StoreSeed {
   workspaces: Workspace[];
   memberships: Membership[];
@@ -92,6 +103,8 @@ export class MemoryStore {
     string,
     { byId: Map<string, TelemetryEvent>; sorted: TelemetryEvent[] | null }
   >();
+  /** Latest cohort metrics per flag and environment, same key as targeting. */
+  private readonly metrics = new Map<string, StoredMetrics>();
   private sequence = 0;
 
   constructor(private readonly now: () => Date = () => new Date()) {}
@@ -493,6 +506,49 @@ export class MemoryStore {
       total: sorted.length,
       nextCursor: more && last ? encodeCursor(last) : null,
     };
+  }
+
+  /**
+   * Replaces the cohort metrics for one flag in one environment.
+   *
+   * Telemetry is never deleted, so a report built from fewer events than the
+   * stored one comes from an older read and is refused rather than letting a
+   * slow worker roll the numbers back.
+   */
+  putCohortMetrics(
+    workspaceId: string,
+    flagKey: string,
+    environmentKey: string,
+    metrics: CohortMetrics,
+    computedBy: string,
+  ): StoredMetrics {
+    this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    const key = targetingKey(workspaceId, flagKey, environmentKey);
+    const current = this.metrics.get(key);
+    if (current && metrics.eventCount < current.metrics.eventCount) {
+      throw new ApiError(
+        409,
+        "STALE_METRICS",
+        `Stored metrics cover ${current.metrics.eventCount} events; this report covers ${metrics.eventCount}`,
+      );
+    }
+    const stored: StoredMetrics = {
+      workspaceId,
+      flagKey,
+      environmentKey,
+      metrics: structuredClone(metrics),
+      computedAt: this.now().toISOString(),
+      computedBy,
+    };
+    this.metrics.set(key, stored);
+    return structuredClone(stored);
+  }
+
+  getCohortMetrics(workspaceId: string, flagKey: string, environmentKey: string): StoredMetrics {
+    this.requireFlagAndEnvironment(workspaceId, flagKey, environmentKey);
+    const stored = this.metrics.get(targetingKey(workspaceId, flagKey, environmentKey));
+    if (!stored) throw new ApiError(404, "NOT_FOUND", "No metrics have been computed yet");
+    return structuredClone(stored);
   }
 
   private requireEnvironment(workspaceId: string, environmentKey: string): void {

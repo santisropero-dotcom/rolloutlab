@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { MAX_SUBJECT_KEY_LENGTH } from "@rolloutlab/evaluator";
+import { cohortMetricsProblems, type CohortMetrics } from "@rolloutlab/metrics";
 import { authorize } from "../auth.js";
 import {
   MAX_EVENT_ID_LENGTH,
@@ -7,6 +8,7 @@ import {
   OUTCOMES,
   type TelemetryEventInput,
 } from "../domain/telemetry.js";
+import { ApiError } from "../errors.js";
 import type { MemoryStore } from "../store.js";
 
 const MAX_PAGE_SIZE = 500;
@@ -94,6 +96,42 @@ export function registerTelemetryRoutes(app: FastifyInstance, store: MemoryStore
       const { workspaceId, flagKey, environmentKey } = request.params;
       authorize(store, request, workspaceId, "workspace:read");
       return store.listTelemetry(workspaceId, flagKey, environmentKey, request.query);
+    },
+  );
+
+  const metricsPath =
+    "/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/metrics";
+
+  // Written by the metrics worker. The body is checked by
+  // `cohortMetricsProblems` so a malformed or inconsistent report never lands.
+  app.put<{ Params: TelemetryParams; Body: unknown }>(
+    metricsPath,
+    // 2,000 windows of both cohorts stay well under 2 MiB.
+    { schema: { params: telemetryParams }, bodyLimit: 2 * 1024 * 1024 },
+    async (request) => {
+      const { workspaceId, flagKey, environmentKey } = request.params;
+      const membership = authorize(store, request, workspaceId, "telemetry:write");
+      const problems = cohortMetricsProblems(request.body);
+      if (problems.length > 0) {
+        throw new ApiError(400, "VALIDATION_FAILED", problems.join("; "));
+      }
+      return store.putCohortMetrics(
+        workspaceId,
+        flagKey,
+        environmentKey,
+        request.body as CohortMetrics,
+        membership.userId,
+      );
+    },
+  );
+
+  app.get<{ Params: TelemetryParams }>(
+    metricsPath,
+    { schema: { params: telemetryParams } },
+    async (request) => {
+      const { workspaceId, flagKey, environmentKey } = request.params;
+      authorize(store, request, workspaceId, "workspace:read");
+      return store.getCohortMetrics(workspaceId, flagKey, environmentKey);
     },
   );
 }

@@ -13,7 +13,7 @@ Requests name a synthetic user in the `x-rolloutlab-user` header. There is no re
 | `carol` | `storefront` | viewer |
 | `dave` | `payments` | owner |
 
-| Role | Read | Create/update flags | Create environments | Send telemetry |
+| Role | Read | Create/update flags | Create environments | Send telemetry and metrics |
 |---|---|---|---|---|
 | owner | ✅ | ✅ | ✅ | ✅ |
 | editor | ✅ | ✅ | — | ✅ |
@@ -42,6 +42,8 @@ A user outside a workspace gets `404`, the same answer as for a workspace that d
 | POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/rollout/transitions` | owner, editor |
 | GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/events` | read |
 | POST | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/events` | owner, editor |
+| GET | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/metrics` | read |
+| PUT | `/workspaces/:workspaceId/flags/:flagKey/environments/:environmentKey/telemetry/metrics` | owner, editor |
 
 Flag and environment keys are lowercase kebab case (`new-checkout`). New flags default to `false`. Errors use `{ "error": { "code", "message" } }`.
 
@@ -185,4 +187,17 @@ pnpm --filter @rolloutlab/api telemetry:replay --percentage 10 --treatment-error
 # {"received":3000,"accepted":0,"duplicates":3000,"rejected":0}
 ```
 
-Telemetry is kept in memory with the rest of the data; nothing aggregates it yet.
+Telemetry is kept in memory with the rest of the data.
+
+### Cohort metrics
+
+The metrics worker (`apps/worker`) aggregates the stored events with `@rolloutlab/metrics` and sends the result to `PUT …/telemetry/metrics`; `GET …/telemetry/metrics` returns the latest report with `computedAt` and `computedBy`, or `404` before the first one.
+
+- The report is checked as a whole: schema version, window length, timestamps, digest, and that windows and totals add up to `eventCount`. Any problem → `400 VALIDATION_FAILED` listing all of them.
+- Telemetry is never deleted, so a report covering fewer events than the stored one comes from an older read and is refused with `409 STALE_METRICS`.
+
+```sh
+curl -s localhost:4000/workspaces/storefront/flags/new-checkout/environments/production/telemetry/metrics \
+  -H 'x-rolloutlab-user: carol'
+# {"workspaceId":"storefront",…,"metrics":{"eventCount":3000,"totals":{"treatment":{…},"control":{…}},"windows":[…]},"computedAt":"…","computedBy":"bob"}
+```
